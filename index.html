@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>2026 手搖紀錄器</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
@@ -20,194 +18,263 @@
         .custom-dashed-border {
             border: 3px dashed rgba(169, 214, 241, 0.6);
         }
+        .active-tab {
+            background-color: #3B82F6 !important;
+            color: white !important;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <div id="app"></div>
 
     <script>
-        // 使用原生 React.createElement 的簡寫，避免 Babel 編譯錯誤
-        const h = React.createElement;
-        const { useState, useEffect, useMemo } = React;
+        // 狀態管理
+        let state = {
+            activeTab: 'daily',
+            currentDate: new Date(2026, 0, 1),
+            selectedDate: new Date(2026, 0, 1).toDateString(),
+            records: JSON.parse(localStorage.getItem('drink_records_2026') || '{}'),
+            editingDraft: null
+        };
 
-        // 圖示組件：直接操作 DOM 確保 100% 渲染
-        const Icon = ({ name, size = 24, className = "" }) => {
-            const ref = React.useRef(null);
-            useEffect(() => {
-                if (ref.current && window.lucide) {
-                    ref.current.innerHTML = '';
-                    const icon = window.lucide.icons[name];
-                    if (icon) {
-                        const svg = icon.toSvg({
-                            width: size,
-                            height: size,
-                            class: className,
-                            'stroke-width': 2
-                        });
-                        ref.current.innerHTML = svg;
+        const iceOptions = ["固定", "正常", "少冰", "微冰", "去冰", "常溫", "溫"];
+        const sugarOptions = ["固定", "全糖", "少糖", "半糖", "微糖", "微微糖", "一分糖", "無糖"];
+
+        // 更新狀態並重新渲染
+        function setState(newState) {
+            state = { ...state, ...newState };
+            localStorage.setItem('drink_records_2026', JSON.stringify(state.records));
+            render();
+        }
+
+        // 核心渲染函數
+        function render() {
+            const app = document.getElementById('app');
+            const stats = calculateStats();
+            
+            app.innerHTML = `
+                <div class="min-h-screen p-4 md:p-8 flex items-start justify-center">
+                    <div class="w-full max-w-5xl bg-white rounded-[40px] shadow-2xl overflow-hidden border-2 border-white relative mt-4">
+                        <div class="absolute inset-2 custom-dashed-border rounded-[34px] pointer-events-none z-0"></div>
+                        
+                        <div class="relative z-10">
+                            <!-- Header -->
+                            <header class="p-8 text-center border-b border-slate-100" style="background-color: #FEEFAD">
+                                <h1 class="text-2xl md:text-3xl font-black flex items-center justify-center gap-3">
+                                    <div class="p-2 bg-white rounded-2xl shadow-sm"><i data-lucide="coffee" class="text-blue-500"></i></div>
+                                    2026 的我喝了多少手搖
+                                </h1>
+                                <div class="flex justify-center mt-6">
+                                    <div class="bg-white p-1.5 rounded-2xl flex gap-1 shadow-sm border border-yellow-200/50">
+                                        <button onclick="setState({activeTab: 'daily'})" class="flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-black transition-all ${state.activeTab === 'daily' ? 'active-tab' : 'text-blue-400'}">
+                                            <i data-lucide="calendar" style="width:16px"></i> 日常紀錄
+                                        </button>
+                                        <button onclick="setState({activeTab: 'stats'})" class="flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-black transition-all ${state.activeTab === 'stats' ? 'active-tab' : 'text-blue-400'}">
+                                            <i data-lucide="pie-chart" style="width:16px"></i> 統計分析
+                                        </button>
+                                    </div>
+                                </div>
+                            </header>
+
+                            <!-- Mini Stats -->
+                            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 p-6 bg-slate-50/30">
+                                ${renderStatCard("本月杯數", `${stats.monthlyCount} 杯`, "text-blue-600")}
+                                ${renderStatCard("本月花費", `$${stats.monthlySpend}`, "text-green-600")}
+                                ${renderStatCard("年度總計", `${stats.yearlyCount} 杯`, "text-purple-600")}
+                                ${renderStatCard("年度總額", `$${stats.yearlySpend}`, "text-orange-600")}
+                            </div>
+
+                            <div class="border-t border-slate-100">
+                                ${state.activeTab === 'daily' ? renderDailyView() : renderStatsView(stats)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            lucide.createIcons();
+        }
+
+        function renderStatCard(label, value, colorClass) {
+            return `
+                <div class="bg-white p-5 rounded-3xl border border-slate-100 text-center shadow-sm">
+                    <p class="text-[10px] text-gray-400 font-black mb-1 uppercase">${label}</p>
+                    <p class="text-xl md:text-2xl font-black ${colorClass}">${value}</p>
+                </div>
+            `;
+        }
+
+        function renderDailyView() {
+            const y = state.currentDate.getFullYear();
+            const m = state.currentDate.getMonth();
+            const days = getMonthDays(y, m);
+            const selectedDateLabel = new Date(state.selectedDate).toLocaleDateString('zh-TW', { month: 'long', day: 'numeric' });
+            const dayRecords = state.records[state.selectedDate] || [];
+
+            return `
+                <div class="flex flex-col lg:flex-row">
+                    <!-- Calendar Section -->
+                    <div class="w-full lg:w-1/2 p-6 md:p-8 lg:border-r border-slate-100 bg-white">
+                        <div class="flex items-center justify-between mb-8">
+                            <button onclick="changeMonth(-1)" class="p-3 bg-slate-50 rounded-2xl text-blue-500"><i data-lucide="chevron-left"></i></button>
+                            <h2 class="text-xl font-black">${y} 年 ${m + 1} 月</h2>
+                            <button onclick="changeMonth(1)" class="p-3 bg-slate-50 rounded-2xl text-blue-500"><i data-lucide="chevron-right"></i></button>
+                        </div>
+                        <div class="grid grid-cols-7 gap-2">
+                            ${['日','一','二','三','四','五','六'].map(d => `<div class="text-center text-[10px] font-black text-slate-300 mb-2">${d}</div>`).join('')}
+                            ${days.map(d => {
+                                if (!d) return `<div></div>`;
+                                const dStr = d.toDateString();
+                                const isSelected = state.selectedDate === dStr;
+                                const hasData = (state.records[dStr] || []).length > 0;
+                                return `<button onclick="selectDate('${dStr}')" class="aspect-square rounded-xl flex items-center justify-center text-sm font-black transition-all ${isSelected ? 'bg-blue-500 text-white scale-110 shadow-lg' : hasData ? 'bg-blue-100 text-blue-600' : 'bg-slate-50'}">${d.getDate()}</button>`;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    <!-- Records Section -->
+                    <div class="w-full lg:w-1/2 p-6 md:p-8 bg-slate-50/30">
+                        <div class="flex justify-between items-center mb-6">
+                            <h3 class="text-lg font-black">${selectedDateLabel}</h3>
+                            ${!state.editingDraft ? `<button onclick="openAddForm()" class="bg-blue-500 text-white px-5 py-2 rounded-xl font-black shadow-md">新增</button>` : ''}
+                        </div>
+
+                        ${state.editingDraft ? renderEditForm() : ''}
+
+                        <div class="space-y-4">
+                            ${dayRecords.length === 0 && !state.editingDraft ? `<div class="text-center py-16 text-slate-300 font-bold">今天尚未有紀錄</div>` : ''}
+                            ${dayRecords.map((r, idx) => `
+                                <div class="bg-white p-5 rounded-[28px] border border-slate-100 flex justify-between items-center shadow-sm">
+                                    <div>
+                                        <p class="text-[10px] text-blue-300 font-black uppercase">${r.shop}</p>
+                                        <p class="text-lg font-black text-slate-700">${r.item}</p>
+                                        <p class="text-[10px] bg-blue-50 px-2 py-0.5 rounded text-blue-400 inline-block mt-1 font-bold">${r.ice} / ${r.sugar}</p>
+                                    </div>
+                                    <div class="text-right">
+                                        <p class="text-xl font-black text-blue-500">$${r.price}</p>
+                                        <button onclick="deleteRecord(${idx})" class="text-slate-200 hover:text-red-400 mt-1"><i data-lucide="trash-2" style="width:14px"></i></button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderEditForm() {
+            return `
+                <div class="bg-white p-6 rounded-[32px] shadow-xl border-2 border-blue-100 mb-6">
+                    <input id="f-shop" placeholder="店家" class="w-full bg-slate-50 rounded-xl p-3 mb-3 font-bold outline-none" value="${state.editingDraft.shop}">
+                    <input id="f-item" placeholder="品項" class="w-full bg-slate-50 rounded-xl p-3 mb-3 font-bold outline-none" value="${state.editingDraft.item}">
+                    <input id="f-price" type="number" placeholder="金額" class="w-full bg-slate-50 rounded-xl p-3 mb-4 font-black outline-none" value="${state.editingDraft.price}">
+                    <div class="flex gap-2">
+                        <button onclick="saveRecord()" class="flex-1 bg-blue-500 text-white py-3 rounded-xl font-black">儲存</button>
+                        <button onclick="setState({editingDraft: null})" class="px-4 bg-slate-100 text-slate-400 rounded-xl font-black">取消</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderStatsView(stats) {
+            return `
+                <div class="p-8 space-y-8 bg-white min-h-[400px]">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-center">
+                        <div class="bg-blue-50 p-8 rounded-[40px] border border-blue-100">
+                            <p class="text-blue-400 font-black text-xs uppercase mb-2">年度最常喝品項</p>
+                            <p class="text-3xl font-black text-slate-700">${stats.topItem}</p>
+                        </div>
+                        <div class="bg-yellow-50 p-8 rounded-[40px] border border-yellow-100">
+                            <p class="text-yellow-600 font-black text-xs uppercase mb-2">年度最愛店家</p>
+                            <p class="text-3xl font-black text-slate-700">${stats.topShop}</p>
+                        </div>
+                    </div>
+                    <div class="bg-slate-50 p-10 rounded-[40px] text-center border-2 border-slate-100">
+                        <p class="text-slate-400 font-black text-xs uppercase">2026 年度累計總花費</p>
+                        <p class="text-5xl font-black text-blue-500 mt-2">$${stats.yearlySpend}</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 邏輯處理函數
+        function calculateStats() {
+            let mCount = 0, mSpend = 0, yCount = 0, ySpend = 0;
+            const shopFreq = {}, itemFreq = {};
+            const targetMonth = state.currentDate.getMonth();
+
+            Object.entries(state.records).forEach(([dateStr, dayRecords]) => {
+                const d = new Date(dateStr);
+                if (d.getFullYear() === 2026) {
+                    yCount += dayRecords.length;
+                    const spend = dayRecords.reduce((s, r) => s + (Number(r.price) || 0), 0);
+                    ySpend += spend;
+                    if (d.getMonth() === targetMonth) {
+                        mCount += dayRecords.length;
+                        mSpend += spend;
                     }
+                    dayRecords.forEach(r => {
+                        if (r.shop) shopFreq[r.shop] = (shopFreq[r.shop] || 0) + 1;
+                        if (r.item) itemFreq[r.item] = (itemFreq[r.item] || 0) + 1;
+                    });
                 }
-            }, [name, size, className]);
-            return h('span', { ref, className: `inline-flex items-center justify-center ${className}` });
-        };
-
-        const App = () => {
-            const [activeTab, setActiveTab] = useState('daily');
-            const [currentDate, setCurrentDate] = useState(new Date(2026, 0, 1));
-            const [selectedDate, setSelectedDate] = useState(new Date(2026, 0, 1).toDateString());
-            const [records, setRecords] = useState(() => {
-                try {
-                    const saved = localStorage.getItem('drink_records_2026');
-                    return saved ? JSON.parse(saved) : {};
-                } catch (e) { return {}; }
             });
-            const [editingDraft, setEditingDraft] = useState(null);
 
-            const iceOptions = ["固定", "正常", "少冰", "微冰", "去冰", "常溫", "溫"];
-            const sugarOptions = ["固定", "全糖", "少糖", "半糖", "微糖", "微微糖", "一分糖", "無糖"];
+            return {
+                monthlyCount: mCount, monthlySpend: mSpend,
+                yearlyCount: yCount, yearlySpend: ySpend,
+                topShop: Object.entries(shopFreq).sort((a,b)=>b[1]-a[1])[0]?.[0] || "尚未有資料",
+                topItem: Object.entries(itemFreq).sort((a,b)=>b[1]-a[1])[0]?.[0] || "尚未有資料"
+            };
+        }
 
-            useEffect(() => {
-                localStorage.setItem('drink_records_2026', JSON.stringify(records));
-            }, [records]);
+        function getMonthDays(y, m) {
+            const total = new Date(y, m + 1, 0).getDate();
+            const start = new Date(y, m, 1).getDay();
+            const res = [];
+            for (let i = 0; i < start; i++) res.push(null);
+            for (let i = 1; i <= total; i++) res.push(new Date(y, m, i));
+            return res;
+        }
 
-            const stats = useMemo(() => {
-                let monthlyCount = 0, monthlySpend = 0, yearlyCount = 0, yearlySpend = 0;
-                const shopFreq = {}, itemFreq = {};
-                const monthlyData = Array.from({ length: 12 }, () => ({ count: 0, spend: 0 }));
-                const targetMonth = currentDate.getMonth();
-
-                Object.entries(records).forEach(([dateStr, dayRecords]) => {
-                    const d = new Date(dateStr);
-                    if (d.getFullYear() === 2026) {
-                        const count = dayRecords.length;
-                        const spend = dayRecords.reduce((sum, r) => sum + (Number(r.price) || 0), 0);
-                        const mIdx = d.getMonth();
-                        yearlyCount += count;
-                        yearlySpend += spend;
-                        if (monthlyData[mIdx]) {
-                            monthlyData[mIdx].count += count;
-                            monthlyData[mIdx].spend += spend;
-                        }
-                        if (mIdx === targetMonth) {
-                            monthlyCount += count;
-                            monthlySpend += spend;
-                        }
-                        dayRecords.forEach(r => {
-                            if (r.shop) shopFreq[r.shop] = (shopFreq[r.shop] || 0) + 1;
-                            if (r.item) itemFreq[r.item] = (itemFreq[r.item] || 0) + 1;
-                        });
-                    }
-                });
-                return { monthlyCount, monthlySpend, yearlyCount, yearlySpend, 
-                         topShop: Object.entries(shopFreq).sort((a,b)=>b[1]-a[1])[0]?.[0] || "無",
-                         topItem: Object.entries(itemFreq).sort((a,b)=>b[1]-a[1])[0]?.[0] || "無",
-                         monthlyData };
-            }, [records, currentDate]);
-
-            const monthDays = useMemo(() => {
-                const y = currentDate.getFullYear(), m = currentDate.getMonth();
-                const total = new Date(y, m + 1, 0).getDate();
-                const start = new Date(y, m, 1).getDay();
-                const res = [];
-                for(let i=0; i<start; i++) res.push(null);
-                for(let i=1; i<=total; i++) res.push(new Date(y, m, i));
-                return res;
-            }, [currentDate]);
-
-            // 渲染邏輯改用 h(...) 確保不依賴 Babel
-            return h('div', { className: "min-h-screen p-4 md:p-8 flex items-start justify-center" },
-                h('div', { className: "w-full max-w-5xl bg-white rounded-[40px] shadow-2xl overflow-hidden border-2 border-white relative mt-4" },
-                    h('div', { className: "absolute inset-2 custom-dashed-border rounded-[34px] pointer-events-none z-0" }),
-                    h('div', { className: "relative z-10" },
-                        // Header
-                        h('header', { className: "p-8 text-center border-b border-slate-100", style: { backgroundColor: '#FEEFAD' } },
-                            h('h1', { className: "text-2xl md:text-3xl font-black flex items-center justify-center gap-3" },
-                                h('div', { className: "p-2 bg-white rounded-2xl shadow-sm" }, h(Icon, { name: "Coffee", className: "text-blue-500" })),
-                                "2026 的我喝了多少手搖"
-                            ),
-                            h('div', { className: "flex justify-center mt-6" },
-                                h('div', { className: "bg-white p-1.5 rounded-2xl flex gap-1 shadow-sm border border-yellow-200/50" },
-                                    h('button', { 
-                                        onClick: () => setActiveTab('daily'),
-                                        className: `flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-black transition-all ${activeTab === 'daily' ? 'bg-blue-500 text-white shadow-md' : 'text-blue-400'}`
-                                    }, h(Icon, { name: "Calendar", size: 16 }), "日常紀錄"),
-                                    h('button', { 
-                                        onClick: () => setActiveTab('stats'),
-                                        className: `flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-black transition-all ${activeTab === 'stats' ? 'bg-blue-500 text-white shadow-md' : 'text-blue-400'}`
-                                    }, h(Icon, { name: "PieChart", size: 16 }), "統計分析")
-                                )
-                            )
-                        ),
-                        // Content
-                        activeTab === 'daily' ? h('div', { className: "flex flex-col lg:flex-row" },
-                            // Left: Calendar
-                            h('div', { className: "w-full lg:w-1/2 p-6 md:p-8 lg:border-r border-slate-100 bg-white" },
-                                h('div', { className: "flex items-center justify-between mb-8" },
-                                    h('button', { onClick: () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth()-1)), className: "p-3 bg-slate-50 rounded-2xl" }, h(Icon, { name: "ChevronLeft" })),
-                                    h('h2', { className: "text-xl font-black" }, `${currentDate.getFullYear()} 年 ${currentDate.getMonth()+1} 月`),
-                                    h('button', { onClick: () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth()+1)), className: "p-3 bg-slate-50 rounded-2xl" }, h(Icon, { name: "ChevronRight" }))
-                                ),
-                                h('div', { className: "grid grid-cols-7 gap-2" },
-                                    monthDays.map((d, i) => d ? h('button', {
-                                        key: i,
-                                        onClick: () => { setSelectedDate(d.toDateString()); setEditingDraft(null); },
-                                        className: `aspect-square rounded-xl flex items-center justify-center text-sm font-black transition-all ${selectedDate === d.toDateString() ? 'bg-blue-500 text-white scale-110 shadow-lg' : (records[d.toDateString()]?.length ? 'bg-blue-100 text-blue-600' : 'bg-slate-50')}`
-                                    }, d.getDate()) : h('div', { key: i }))
-                                )
-                            ),
-                            // Right: Records
-                            h('div', { className: "w-full lg:w-1/2 p-6 md:p-8 bg-slate-50/30" },
-                                h('div', { className: "flex justify-between items-center mb-6" },
-                                    h('h3', { className: "text-lg font-black" }, new Date(selectedDate).toLocaleDateString('zh-TW', { month: 'long', day: 'numeric' })),
-                                    !editingDraft && h('button', { 
-                                        onClick: () => setEditingDraft({ id: Date.now(), shop: "", item: "", ice: "正常", sugar: "半糖", price: "" }),
-                                        className: "bg-blue-500 text-white px-5 py-2 rounded-xl font-black"
-                                    }, "新增")
-                                ),
-                                editingDraft && h('div', { className: "bg-white p-6 rounded-[32px] shadow-xl border-2 border-blue-100 mb-6" },
-                                    h('input', { placeholder: "店家", className: "w-full bg-slate-50 rounded-xl p-3 mb-3", onChange: e => setEditingDraft({...editingDraft, shop: e.target.value}) }),
-                                    h('input', { placeholder: "品項", className: "w-full bg-slate-50 rounded-xl p-3 mb-3", onChange: e => setEditingDraft({...editingDraft, item: e.target.value}) }),
-                                    h('input', { type: "number", placeholder: "金額", className: "w-full bg-slate-50 rounded-xl p-3 mb-4", onChange: e => setEditingDraft({...editingDraft, price: e.target.value}) }),
-                                    h('button', { 
-                                        onClick: () => {
-                                            if(!editingDraft.shop || !editingDraft.item) return;
-                                            setRecords({...records, [selectedDate]: [...(records[selectedDate]||[]), editingDraft]});
-                                            setEditingDraft(null);
-                                        },
-                                        className: "w-full bg-blue-500 text-white py-3 rounded-xl font-black"
-                                    }, "儲存")
-                                ),
-                                h('div', { className: "space-y-4" },
-                                    (records[selectedDate] || []).map(r => h('div', { key: r.id, className: "bg-white p-5 rounded-[28px] border border-slate-100 flex justify-between items-center" },
-                                        h('div', null,
-                                            h('p', { className: "text-[10px] text-blue-300 font-black" }, r.shop),
-                                            h('p', { className: "text-lg font-black text-slate-700" }, r.item),
-                                            h('p', { className: "text-[9px] text-slate-400" }, `${r.ice} / ${r.sugar}`)
-                                        ),
-                                        h('div', { className: "text-right" },
-                                            h('p', { className: "text-xl font-black text-blue-500" }, `$${r.price}`),
-                                            h('button', { onClick: () => setRecords({...records, [selectedDate]: records[selectedDate].filter(x=>x.id!==r.id)}), className: "text-slate-200 hover:text-red-400" }, h(Icon, { name: "Trash2", size: 14 }))
-                                        )
-                                    ))
-                                )
-                            )
-                        ) : h('div', { className: "p-8 space-y-8" },
-                            h('div', { className: "grid grid-cols-1 md:grid-cols-2 gap-6" },
-                                h('div', { className: "bg-blue-50 p-6 rounded-3xl" }, h('p', { className: "text-sm font-bold" }, "本月總計"), h('p', { className: "text-3xl font-black" }, `${stats.monthlyCount} 杯 / $${stats.monthlySpend}`)),
-                                h('div', { className: "bg-green-50 p-6 rounded-3xl" }, h('p', { className: "text-sm font-bold" }, "年度累計"), h('p', { className: "text-3xl font-black" }, `${stats.yearlyCount} 杯 / $${stats.yearlySpend}`))
-                            ),
-                            h('div', { className: "p-8 bg-slate-50 rounded-[40px] text-center" },
-                                h('p', { className: "text-slate-400 font-bold" }, "最常喝的品項"),
-                                h('p', { className: "text-2xl font-black text-blue-500" }, stats.topItem)
-                            )
-                        )
-                    )
-                )
-            );
+        window.changeMonth = (val) => {
+            const newDate = new Date(state.currentDate);
+            newDate.setMonth(newDate.getMonth() + val);
+            setState({ currentDate: newDate });
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(h(App));
+        window.selectDate = (dStr) => {
+            setState({ selectedDate: dStr, editingDraft: null });
+        };
+
+        window.openAddForm = () => {
+            setState({ editingDraft: { shop: '', item: '', price: '', ice: '正常', sugar: '半糖' } });
+        };
+
+        window.saveRecord = () => {
+            const shop = document.getElementById('f-shop').value;
+            const item = document.getElementById('f-item').value;
+            const price = document.getElementById('f-price').value;
+            if (!shop || !item) return;
+
+            const newRecords = { ...state.records };
+            const dayRecords = [...(newRecords[state.selectedDate] || [])];
+            dayRecords.push({ shop, item, price: Number(price) || 0, ice: '正常', sugar: '半糖', id: Date.now() });
+            newRecords[state.selectedDate] = dayRecords;
+            setState({ records: newRecords, editingDraft: null });
+        };
+
+        window.deleteRecord = (idx) => {
+            const newRecords = { ...state.records };
+            const dayRecords = [...newRecords[state.selectedDate]];
+            dayRecords.splice(idx, 1);
+            newRecords[state.selectedDate] = dayRecords;
+            setState({ records: newRecords });
+        };
+
+        // 初始化
+        render();
     </script>
 </body>
 </html>
